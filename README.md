@@ -67,7 +67,7 @@ cargo run --release -- --file templates/TimesheetTemplate.xlsx --start 2026-04-2
 ```
 
 The application will generate one Excel workbook per week in `output/`, for example:
-`NSFAS_iamkabelomoobi_Week_1_2026-04-26_to_2026-04-26.xlsx`
+`REPO_iamkabelomoobi_Week_1_2026-04-26_to_2026-04-26.xlsx`
 
 ## Generation Rules
 
