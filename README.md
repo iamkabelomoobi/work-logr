@@ -1,4 +1,4 @@
-# GitHub Timesheet Generator
+# Timesheet Generator
 
 A Rust CLI that generates weekly Excel timesheets from GitHub issues, pull requests, and commits.
 
