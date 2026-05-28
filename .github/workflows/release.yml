@@ -1,0 +1,61 @@
+# .github/workflows/release.yml
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: work-logr
+            asset_name: work-logr-linux-x86_64.tar.gz
+            archive: tar
+
+          - os: windows-latest
+            artifact_name: work-logr.exe
+            asset_name: work-logr-windows-x86_64.zip
+            archive: zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Package Linux binary
+        if: matrix.archive == 'tar'
+        run: |
+          mkdir dist
+          cp target/release/${{ matrix.artifact_name }} dist/
+          cp README.md dist/
+          tar -czf ${{ matrix.asset_name }} -C dist .
+
+      - name: Package Windows binary
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          mkdir dist
+          cp target/release/${{ matrix.artifact_name }} dist/
+          cp README.md dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
