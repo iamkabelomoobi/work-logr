@@ -16,6 +16,13 @@ use timesheet::weeks::split_entries_by_week;
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    let disable_banner = std::env::var_os("WORKLOGR_NO_BANNER").is_some();
+    let stdout_is_tty = atty::is(atty::Stream::Stdout);
+
+    if !disable_banner && stdout_is_tty {
+        print_banner();
+    }
+
     let args = CliArgs::parse_args();
     args.validate()?;
 
@@ -117,6 +124,57 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\nTotal entries: {}", entries.len());
     Ok(())
+}
+
+fn print_banner() {
+    const CYAN: &str = "\x1b[96m";
+    const YELLOW: &str = "\x1b[93m";
+    const GREEN: &str = "\x1b[92m";
+    const DIM: &str = "\x1b[2m";
+    const BOLD: &str = "\x1b[1m";
+    const RESET: &str = "\x1b[0m";
+
+    let ascii_art = [
+        r"_    _    ___   _ __  _         _        ___    __ _  _ __ ",
+        r"| |  | | / _ \| '__| | | __    | |      / _ \  / _` | '__|",
+        r"| |/\| || | | || |   | |/ /    | |     | | | || (_| || |   ",
+        r"\  /\  /| |_| ||_|   |   <     | |___  | |_| | \__, ||_|   ",
+        r" \/  \/  \___/       |_|\_\    |_____|  \___/      | |     ",
+        r"                                                    | |     ",
+        r"                                                    |_|     ",
+    ];
+
+    let term_width: usize = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    let art_width = ascii_art.iter().map(|l| l.len()).max().unwrap_or(60);
+    let art_pad = " ".repeat(term_width.saturating_sub(art_width) / 2);
+
+    println!();
+    for line in &ascii_art {
+        println!("{art_pad}{BOLD}{CYAN}{line}{RESET}");
+    }
+    println!();
+
+    let print_centered = |plain: &str, style: &dyn Fn(&str) -> String| {
+        let colored = style(plain);
+        let pad = " ".repeat(term_width.saturating_sub(plain.len()) / 2);
+        println!("{pad}{colored}");
+    };
+
+    let version = env!("CARGO_PKG_VERSION");
+    let version_text = format!("Work Logr v{version}");
+    print_centered(&version_text, &|t| format!("{}{}{}{}", BOLD, YELLOW, t, RESET));
+
+    print_centered("Author: Kabelo Moobi", &|t| format!("{}{}{}", GREEN, t, RESET));
+
+    print_centered(
+        "Generate weekly Excel timesheets from GitHub activity",
+        &|t| format!("{}{}{}", DIM, t, RESET),
+    );
+    println!();
 }
 
 fn is_pr_relevant_for_commit_fetch(
