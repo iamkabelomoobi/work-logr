@@ -14,3 +14,4 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 thiserror = "2"
 zip = "4.6"
+atty = "0.2"

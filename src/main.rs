@@ -16,7 +16,12 @@ use timesheet::weeks::split_entries_by_week;
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    print_banner();
+    let disable_banner = std::env::var_os("WORKLOGR_NO_BANNER").is_some();
+    let stdout_is_tty = atty::is(atty::Stream::Stdout);
+
+    if !disable_banner && stdout_is_tty {
+        print_banner();
+    }
 
     let args = CliArgs::parse_args();
     args.validate()?;
@@ -153,23 +158,21 @@ fn print_banner() {
     }
     println!();
 
-    let print_centered = |plain: &str, colored: &str| {
+    let print_centered = |plain: &str, style: &dyn Fn(&str) -> String| {
+        let colored = style(plain);
         let pad = " ".repeat(term_width.saturating_sub(plain.len()) / 2);
         println!("{pad}{colored}");
     };
 
     let version = env!("CARGO_PKG_VERSION");
-    print_centered(
-        &format!("Work Logr v{version}"),
-        &format!("{BOLD}{YELLOW}Work Logr  v{version}{RESET}"),
-    );
-    print_centered(
-        "Author: Kabelo Moobi",
-        &format!("{GREEN}Author: Kabelo Moobi{RESET}"),
-    );
+    let version_text = format!("Work Logr v{version}");
+    print_centered(&version_text, &|t| format!("{}{}{}{}", BOLD, YELLOW, t, RESET));
+
+    print_centered("Author: Kabelo Moobi", &|t| format!("{}{}{}", GREEN, t, RESET));
+
     print_centered(
         "Generate weekly Excel timesheets from GitHub activity",
-        &format!("{DIM}Generate weekly Excel timesheets from GitHub activity{RESET}"),
+        &|t| format!("{}{}{}", DIM, t, RESET),
     );
     println!();
 }
