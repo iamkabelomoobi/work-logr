@@ -16,6 +16,8 @@ use timesheet::weeks::split_entries_by_week;
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    print_banner();
+
     let args = CliArgs::parse_args();
     args.validate()?;
 
@@ -117,6 +119,59 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\nTotal entries: {}", entries.len());
     Ok(())
+}
+
+fn print_banner() {
+    const CYAN: &str = "\x1b[96m";
+    const YELLOW: &str = "\x1b[93m";
+    const GREEN: &str = "\x1b[92m";
+    const DIM: &str = "\x1b[2m";
+    const BOLD: &str = "\x1b[1m";
+    const RESET: &str = "\x1b[0m";
+
+    let ascii_art = [
+        r"_    _    ___   _ __  _         _        ___    __ _  _ __ ",
+        r"| |  | | / _ \| '__| | | __    | |      / _ \  / _` | '__|",
+        r"| |/\| || | | || |   | |/ /    | |     | | | || (_| || |   ",
+        r"\  /\  /| |_| ||_|   |   <     | |___  | |_| | \__, ||_|   ",
+        r" \/  \/  \___/       |_|\_\    |_____|  \___/      | |     ",
+        r"                                                    | |     ",
+        r"                                                    |_|     ",
+    ];
+
+    let term_width: usize = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    let art_width = ascii_art.iter().map(|l| l.len()).max().unwrap_or(60);
+    let art_pad = " ".repeat(term_width.saturating_sub(art_width) / 2);
+
+    println!();
+    for line in &ascii_art {
+        println!("{art_pad}{BOLD}{CYAN}{line}{RESET}");
+    }
+    println!();
+
+    let print_centered = |plain: &str, colored: &str| {
+        let pad = " ".repeat(term_width.saturating_sub(plain.len()) / 2);
+        println!("{pad}{colored}");
+    };
+
+    let version = env!("CARGO_PKG_VERSION");
+    print_centered(
+        &format!("Work Logr v{version}"),
+        &format!("{BOLD}{YELLOW}Work Logr  v{version}{RESET}"),
+    );
+    print_centered(
+        "Author: Kabelo Moobi",
+        &format!("{GREEN}Author: Kabelo Moobi{RESET}"),
+    );
+    print_centered(
+        "Generate weekly Excel timesheets from GitHub activity",
+        &format!("{DIM}Generate weekly Excel timesheets from GitHub activity{RESET}"),
+    );
+    println!();
 }
 
 fn is_pr_relevant_for_commit_fetch(
