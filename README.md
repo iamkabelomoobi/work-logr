@@ -1,4 +1,5 @@
-# Timesheet Generator
+<img width="768" height="293" alt="image" src="https://github.com/user-attachments/assets/f2cc144d-83ab-4285-a804-cc08c9ef0856" />
+
 
 A Rust CLI that generates weekly Excel timesheets from GitHub issues, pull requests, and commits.
 
