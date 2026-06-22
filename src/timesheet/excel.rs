@@ -23,6 +23,7 @@ pub fn export_to_excel(
     repo: &str,
     user: &str,
     week: &WeekRange,
+    hours_per_day: f64,
 ) -> Result<()> {
     if !template_path.exists() {
         return Err(anyhow!(
@@ -84,7 +85,7 @@ pub fn export_to_excel(
     let repo_idx = strings.push(&repo.to_uppercase());
     let period_idx = strings.push(&period);
 
-    let rows = build_timesheet_rows(entries, week, &mut strings)?;
+    let rows = build_timesheet_rows(entries, week, hours_per_day, &mut strings)?;
     let worksheet = replace_worksheet_data(
         &worksheet,
         &layout,
@@ -104,12 +105,12 @@ pub fn export_to_excel(
 fn build_timesheet_rows(
     entries: &[TimesheetEntry],
     week: &WeekRange,
+    hours_per_day: f64,
     strings: &mut SharedStrings,
 ) -> Result<Vec<TimesheetRow>> {
     let mut by_day: BTreeMap<NaiveDate, Vec<&TimesheetEntry>> = BTreeMap::new();
 
-    // The Excel template has one row per calendar day, so collapse all GitHub
-    // activity for the same date into a single task string.
+    // Group entries by date only so activities are ordered within the week.
     for entry in entries {
         let entry_date = chrono::DateTime::parse_from_rfc3339(&entry.date)
             .with_context(|| format!("Invalid entry date: {}", entry.date))?
@@ -125,27 +126,17 @@ fn build_timesheet_rows(
         let day_entries = by_day.get(&date).cloned().unwrap_or_default();
         let is_weekend = matches!(date.weekday(), Weekday::Sat | Weekday::Sun);
         let day_type = if is_weekend { "Weekend" } else { "Work Day" };
-        let task = task_text(&day_entries);
-        let status = status_text(&day_entries);
-        let hours = if is_weekend || day_entries.is_empty() {
-            0.0
+
+        if day_entries.is_empty() {
+            rows.push(timesheet_row(date, day_type, "", "", 0.0, strings));
         } else {
-            8.0
-        };
-
-        let day_type_idx = strings.push(day_type);
-        let task_idx = strings.push(&task);
-        let status_idx = strings.push(&status);
-        let comment_idx = strings.push("");
-
-        rows.push(TimesheetRow {
-            date_serial: excel_date_serial(date),
-            day_type_idx,
-            task_idx,
-            status_idx,
-            hours,
-            comment_idx,
-        });
+            let hours = if is_weekend { 0.0 } else { hours_per_day };
+            for entry in day_entries {
+                let task = build_task_description(entry);
+                let status = status_text(entry);
+                rows.push(timesheet_row(date, day_type, &task, status, hours, strings));
+            }
+        }
 
         date = date
             .succ_opt()
@@ -155,26 +146,29 @@ fn build_timesheet_rows(
     Ok(rows)
 }
 
-fn task_text(entries: &[&TimesheetEntry]) -> String {
-    entries
-        .iter()
-        .map(|entry| build_task_description(entry))
-        .collect::<Vec<_>>()
-        .join("; ")
+fn timesheet_row(
+    date: NaiveDate,
+    day_type: &str,
+    task: &str,
+    status: &str,
+    hours: f64,
+    strings: &mut SharedStrings,
+) -> TimesheetRow {
+    TimesheetRow {
+        date_serial: excel_date_serial(date),
+        day_type_idx: strings.push(day_type),
+        task_idx: strings.push(task),
+        status_idx: strings.push(status),
+        hours,
+        comment_idx: strings.push(""),
+    }
 }
 
-fn status_text(entries: &[&TimesheetEntry]) -> String {
-    if entries.is_empty() {
-        return String::new();
-    }
-
-    if entries
-        .iter()
-        .all(|entry| matches!(entry.status.as_str(), "closed" | "committed"))
-    {
-        "Completed".to_string()
+fn status_text(entry: &TimesheetEntry) -> &'static str {
+    if matches!(entry.status.as_str(), "closed" | "committed") {
+        "Completed"
     } else {
-        "In progress".to_string()
+        "In progress"
     }
 }
 
@@ -211,7 +205,7 @@ fn replace_worksheet_data(
 
     if rows.len() > layout.data_rows.len() {
         return Err(anyhow!(
-            "Template has {} timesheet row(s), but this week needs {} day row(s)",
+            "Template has {} timesheet row(s), but this week needs {} activity/day row(s)",
             layout.data_rows.len(),
             rows.len()
         ));
@@ -893,6 +887,109 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn writes_same_day_commits_and_pull_requests_to_separate_rows() {
+        let week = WeekRange {
+            start: NaiveDate::from_ymd_opt(2026, 5, 18).expect("valid test date"),
+            end: NaiveDate::from_ymd_opt(2026, 5, 24).expect("valid test date"),
+        };
+        let entries = [
+            timesheet_entry("Commit", "", "Add profile support"),
+            timesheet_entry("Commit", "", "Make hours configurable"),
+            timesheet_entry("Pull Request", "980", "Ship config profiles"),
+            timesheet_entry("Pull Request", "976", "Improve Excel formatting"),
+        ];
+        let mut strings = SharedStrings::new(
+            r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>"#
+                .to_string(),
+        )
+        .expect("shared strings should parse");
+
+        let rows = build_timesheet_rows(&entries, &week, 8.0, &mut strings)
+            .expect("timesheet rows should build");
+
+        assert_eq!(rows.len(), 10);
+        assert!(rows[..4]
+            .iter()
+            .all(|row| row.date_serial == rows[0].date_serial));
+        assert_eq!(
+            strings.values()[rows[0].task_idx],
+            "Commit: Add profile support"
+        );
+        assert_eq!(
+            strings.values()[rows[1].task_idx],
+            "Commit: Make hours configurable"
+        );
+        assert_eq!(
+            strings.values()[rows[2].task_idx],
+            "Pull Request #980: Ship config profiles"
+        );
+        assert_eq!(
+            strings.values()[rows[3].task_idx],
+            "Pull Request #976: Improve Excel formatting"
+        );
+        assert!(rows[..4].iter().all(|row| row.hours == 8.0));
+        assert_eq!(strings.values()[rows[4].task_idx], "");
+        assert_eq!(rows[4].hours, 0.0);
+    }
+
+    #[test]
+    fn writes_each_weekend_activity_to_a_zero_hour_row() {
+        let week = WeekRange {
+            start: NaiveDate::from_ymd_opt(2026, 5, 18).expect("valid test date"),
+            end: NaiveDate::from_ymd_opt(2026, 5, 24).expect("valid test date"),
+        };
+        let entries = [
+            timesheet_entry_on("Commit", "", "Fix Saturday deploy", "2026-05-24T09:00:00Z"),
+            timesheet_entry_on(
+                "Pull Request",
+                "42",
+                "Review weekend release",
+                "2026-05-24T11:00:00Z",
+            ),
+        ];
+        let mut strings = SharedStrings::new(
+            r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>"#
+                .to_string(),
+        )
+        .expect("shared strings should parse");
+
+        let rows = build_timesheet_rows(&entries, &week, 8.0, &mut strings)
+            .expect("timesheet rows should build");
+
+        assert_eq!(rows.len(), 8);
+        assert_eq!(rows[6].date_serial, rows[7].date_serial);
+        assert_eq!(strings.values()[rows[6].day_type_idx], "Weekend");
+        assert_eq!(strings.values()[rows[7].day_type_idx], "Weekend");
+        assert_eq!(rows[6].hours, 0.0);
+        assert_eq!(rows[7].hours, 0.0);
+        assert_eq!(
+            strings.values()[rows[7].task_idx],
+            "Pull Request #42: Review weekend release"
+        );
+    }
+
+    #[test]
+    fn uses_custom_hours_only_for_workdays_with_activity() {
+        let week = WeekRange {
+            start: NaiveDate::from_ymd_opt(2026, 5, 18).expect("valid test date"),
+            end: NaiveDate::from_ymd_opt(2026, 5, 24).expect("valid test date"),
+        };
+        let entries = vec![timesheet_entry("Issue", "42", "Populate Excel template")];
+        let mut strings = SharedStrings::new(
+            r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>"#
+                .to_string(),
+        )
+        .expect("shared strings should parse");
+
+        let rows = build_timesheet_rows(&entries, &week, 7.5, &mut strings)
+            .expect("timesheet rows should build");
+
+        assert_eq!(rows[0].hours, 7.5);
+        assert_eq!(rows[1].hours, 0.0);
+        assert_eq!(rows[5].hours, 0.0);
+    }
+
+    #[test]
     fn exports_template_based_workbook() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -903,19 +1000,10 @@ mod tests {
             start: NaiveDate::from_ymd_opt(2026, 5, 18).expect("valid test date"),
             end: NaiveDate::from_ymd_opt(2026, 5, 24).expect("valid test date"),
         };
-        let entries = vec![TimesheetEntry {
-            entry_type: "Issue".to_string(),
-            number: "42".to_string(),
-            title: "Populate Excel template".to_string(),
-            status: "closed".to_string(),
-            closed_at: "2026-05-18T11:00:00Z".to_string(),
-            created_at: "2026-05-18T09:00:00Z".to_string(),
-            updated_at: "2026-05-18T11:00:00Z".to_string(),
-            assignees: "iamkabelomoobi".to_string(),
-            author: "iamkabelomoobi".to_string(),
-            url: "https://github.com/example/repo/issues/42".to_string(),
-            date: "2026-05-18T11:00:00Z".to_string(),
-        }];
+        let entries = vec![
+            timesheet_entry("Commit", "", "Populate Excel template"),
+            timesheet_entry("Pull Request", "42", "Verify separate activity rows"),
+        ];
 
         export_to_excel(
             &entries,
@@ -924,6 +1012,7 @@ mod tests {
             "nsfas",
             "iamkabelomoobi",
             &week,
+            8.0,
         )
         .expect("template export should succeed");
 
@@ -937,7 +1026,24 @@ mod tests {
             .read_to_string(&mut shared_strings)
             .expect("shared strings should be readable");
         assert!(shared_strings.contains("Populate Excel template"));
+        assert!(shared_strings.contains("Pull Request #42: Verify separate activity rows"));
         assert!(shared_strings.contains("iamkabelomoobi"));
+
+        let output_worksheet = String::from_utf8(read_zip_entry(&output_path, WORKSHEET_PATH))
+            .expect("output worksheet should be UTF-8");
+        let output_strings = parse_shared_string_values(&shared_strings);
+        assert_eq!(
+            cell_value(&output_worksheet, "A8"),
+            cell_value(&output_worksheet, "A9")
+        );
+        assert_eq!(
+            shared_cell_text(&output_worksheet, &output_strings, "C8"),
+            "Commit: Populate Excel template"
+        );
+        assert_eq!(
+            shared_cell_text(&output_worksheet, &output_strings, "C9"),
+            "Pull Request #42: Verify separate activity rows"
+        );
 
         let template_workbook =
             read_zip_entry(Path::new("templates/TimesheetTemplate.xlsx"), WORKBOOK_PATH);
@@ -954,6 +1060,31 @@ mod tests {
         let _ = std::fs::remove_file(output_path);
     }
 
+    fn timesheet_entry(entry_type: &str, number: &str, title: &str) -> TimesheetEntry {
+        timesheet_entry_on(entry_type, number, title, "2026-05-18T11:00:00Z")
+    }
+
+    fn timesheet_entry_on(
+        entry_type: &str,
+        number: &str,
+        title: &str,
+        date: &str,
+    ) -> TimesheetEntry {
+        TimesheetEntry {
+            entry_type: entry_type.to_string(),
+            number: number.to_string(),
+            title: title.to_string(),
+            status: "closed".to_string(),
+            closed_at: String::new(),
+            created_at: "2026-05-18T09:00:00Z".to_string(),
+            updated_at: "2026-05-18T11:00:00Z".to_string(),
+            assignees: "iamkabelomoobi".to_string(),
+            author: "iamkabelomoobi".to_string(),
+            url: format!("https://github.com/example/repo/{entry_type}/{number}"),
+            date: date.to_string(),
+        }
+    }
+
     fn read_zip_entry(path: &Path, entry: &str) -> Vec<u8> {
         let mut archive =
             ZipArchive::new(File::open(path).expect("workbook should exist")).expect("valid xlsx");
@@ -964,5 +1095,17 @@ mod tests {
             .read_to_end(&mut data)
             .expect("entry should be readable");
         data
+    }
+
+    fn cell_value(worksheet: &str, cell_ref: &str) -> String {
+        let (start, end) = find_cell_range(worksheet, cell_ref).expect("cell should exist");
+        value_text(&worksheet[start..end]).expect("cell should have a value")
+    }
+
+    fn shared_cell_text(worksheet: &str, strings: &[String], cell_ref: &str) -> String {
+        let index = cell_value(worksheet, cell_ref)
+            .parse::<usize>()
+            .expect("shared string index should be numeric");
+        strings[index].clone()
     }
 }

@@ -1,6 +1,7 @@
 use super::model::{GitHubCommit, GitHubIssue, TimesheetEntry};
 use crate::utils::dates;
 use chrono::Utc;
+use std::collections::HashSet;
 
 pub fn map_issues_to_entries(
     issues: Vec<GitHubIssue>,
@@ -82,6 +83,16 @@ pub fn map_commits_to_entries(commits: Vec<GitHubCommit>, user: &str) -> Vec<Tim
         .collect()
 }
 
+pub fn exclude_pr_linked_commits(
+    commits: Vec<GitHubCommit>,
+    linked_commit_urls: &HashSet<String>,
+) -> Vec<GitHubCommit> {
+    commits
+        .into_iter()
+        .filter(|commit| !linked_commit_urls.contains(&commit.html_url))
+        .collect()
+}
+
 fn is_user_commit(commit: &GitHubCommit, user: &str) -> bool {
     commit
         .author
@@ -136,6 +147,31 @@ pub fn build_task_description(entry: &TimesheetEntry) -> String {
 mod tests {
     use super::*;
     use crate::timesheet::model::{CommitAuthor, CommitDetails, GitHubCommit, GitHubUser};
+    use std::collections::HashSet;
+
+    #[test]
+    fn excludes_commits_linked_to_included_pull_requests() {
+        let standalone = commit(
+            "Standalone fix",
+            "iamkabelomoobi",
+            "2026-05-18T09:00:00Z",
+            None,
+            1,
+        );
+        let linked = commit(
+            "PR implementation",
+            "iamkabelomoobi",
+            "2026-05-18T10:00:00Z",
+            None,
+            1,
+        );
+        let linked_urls = HashSet::from([linked.html_url.clone()]);
+
+        let filtered = exclude_pr_linked_commits(vec![standalone, linked], &linked_urls);
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].html_url.contains("Standalone fix"));
+    }
 
     #[test]
     fn maps_user_commits_to_committer_date() {

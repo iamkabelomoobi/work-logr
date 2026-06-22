@@ -11,13 +11,13 @@ The application fetches GitHub activity for a configured user and writes one pop
 
 - Fetches GitHub issues and pull requests for a specific user within a date range
 - Fetches commits authored by the configured GitHub user
-- Fetches commits attached to pull requests so PR work across multiple days is included
+- Uses commits attached to included pull requests to suppress duplicate commit rows
 - Filters items by:
   - Assignment to the target user
   - Creation by the target user
   - Date range (created, updated, or closed within range)
 - Places commits on the day they were committed/pushed in GitHub commit metadata
-- Adds multiple same-day commits as separate tasks in the same Excel day row
+- Writes each same-day commit or pull request to a separate Excel row with the date repeated
 - Ignores merge commits, including commits with multiple parents and messages starting with `Merge`, `Merged`, or `Merge:`
 - Exports filtered records into Excel workbooks using a provided `.xlsx` template
 - Supports pagination for large result sets
@@ -64,11 +64,50 @@ GITHUB_USER=your_github_username
 ### Execute
 
 ```bash
-cargo run --release -- --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
+cargo run --release -- --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18 --hours-per-day 7.5
 ```
 
 The application will generate one Excel workbook per week in `output/`, for example:
 `REPO_iamkabelomoobi_Week_1_2026-04-26_to_2026-04-26.xlsx`
+
+### CLI Options
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--file <path>` | Path to the timesheet template file | Required |
+| `--repo <name>` | Override the configured GitHub repository | `GITHUB_REPO` from the selected configuration |
+| `--profile <name>` | Load profile-scoped `WORKLOGR_<PROFILE>_GITHUB_*` variables | Bare `GITHUB_*` variables |
+| `--hours-per-day <f64>` | Hours assigned to a workday with activity | `8.0` |
+| `--start <YYYY-MM-DD>` | Start date | Required |
+| `--end <YYYY-MM-DD>` | End date | Required |
+
+### Profiles
+
+Profiles let multiple project configurations coexist in the same `.env` file. Profile names are
+uppercased and non-alphanumeric characters are replaced with `_`, so `estate-grid` uses the
+`WORKLOGR_ESTATE_GRID_*` prefix.
+
+```env
+WORKLOGR_NSFAS_GITHUB_TOKEN=your_nsfas_token
+WORKLOGR_NSFAS_GITHUB_OWNER=nsfas_owner
+WORKLOGR_NSFAS_GITHUB_REPO=nsfas_repo
+WORKLOGR_NSFAS_GITHUB_USER=your_github_username
+
+WORKLOGR_ESTATE_GRID_GITHUB_TOKEN=your_estate_grid_token
+WORKLOGR_ESTATE_GRID_GITHUB_OWNER=estate_grid_owner
+WORKLOGR_ESTATE_GRID_GITHUB_REPO=estate_grid_repo
+WORKLOGR_ESTATE_GRID_GITHUB_USER=your_github_username
+```
+
+Select a profile with `--profile`:
+
+```bash
+cargo run --release -- --profile nsfas --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
+cargo run --release -- --profile estate-grid --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
+```
+
+When `--profile` is omitted, the existing bare `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, and
+`GITHUB_USER` variables are used.
 
 ## Generation Rules
 
@@ -77,8 +116,8 @@ The application will generate one Excel workbook per week in `output/`, for exam
 - Rows are populated by calendar day from row 8 onward.
 - Issues and pull requests use their closed date when available, otherwise their updated date.
 - Commits use the GitHub committer date.
-- Multiple activities on the same day are joined in `Performed Project Task(s)`.
-- Workdays with activity default to `8` hours.
+- Multiple activities on the same day are written to separate rows with the date repeated.
+- Workdays with activity use `--hours-per-day`, which defaults to `8.0`.
 - Weekends and days without activity default to `0` hours.
 - Merge commits are excluded from the timesheet.
 
