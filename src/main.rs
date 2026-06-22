@@ -7,8 +7,9 @@ mod utils;
 use cli::CliArgs;
 use config::Config;
 use github::GitHubClient;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use timesheet::mapper::deduplicate_entries;
+use timesheet::mapper::{deduplicate_entries, exclude_pr_linked_commits};
 use timesheet::model::GitHubIssue;
 use timesheet::weeks::split_entries_by_week;
 
@@ -26,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse_args();
     args.validate()?;
 
-    let config = Config::from_env()?;
+    let config = Config::from_env(args.profile.as_deref())?;
 
     let repo = args.repo.as_deref().unwrap_or(&config.github_repo);
 
@@ -62,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         "Fetching pull request commits for {} relevant PR(s)...",
         prs_for_commit_fetch.len()
     );
+    let mut pr_commit_urls = HashSet::new();
     for (idx, pr) in prs_for_commit_fetch.iter().enumerate() {
         println!(
             "Fetching PR commits {}/{}: #{}",
@@ -69,9 +71,10 @@ async fn main() -> anyhow::Result<()> {
             prs_for_commit_fetch.len(),
             pr.number
         );
-        let mut pr_commits = github::commits::fetch_pr_commits(&client, pr.number as u32).await?;
-        commits.append(&mut pr_commits);
+        let pr_commits = github::commits::fetch_pr_commits(&client, pr.number as u32).await?;
+        pr_commit_urls.extend(pr_commits.into_iter().map(|commit| commit.html_url));
     }
+    commits = exclude_pr_linked_commits(commits, &pr_commit_urls);
 
     let mut entries =
         timesheet::mapper::map_issues_to_entries(issues, &config.github_user, start_dt, end_dt);
@@ -117,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
             repo,
             &config.github_user,
             week,
+            args.hours_per_day,
         )?;
 
         println!("Generated: {}", filename);
