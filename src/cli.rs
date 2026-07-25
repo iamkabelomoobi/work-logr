@@ -7,8 +7,15 @@ pub struct CliArgs {
     #[arg(short, long, help = "Path to timesheet template file")]
     pub file: String,
 
-    #[arg(short, long, help = "GitHub repository name")]
-    pub repo: Option<String>,
+    #[arg(
+        short,
+        long,
+        num_args = 1..,
+        action = clap::ArgAction::Append,
+        value_name = "REPO",
+        help = "GitHub repository name(s) to merge into one timesheet"
+    )]
+    pub repo: Vec<String>,
 
     #[arg(long, help = "Configuration profile name")]
     pub profile: Option<String>,
@@ -84,6 +91,16 @@ mod tests {
         let parsed = CliArgs::try_parse_from(required_args()).expect("arguments should parse");
 
         assert_eq!(parsed.hours_per_day, 8.0);
+    }
+
+    #[test]
+    fn parses_multiple_repos() {
+        let mut args = required_args();
+        args.extend(["--repo", "repo1", "repo2", "repo3"]);
+
+        let parsed = CliArgs::try_parse_from(args).expect("arguments should parse");
+
+        assert_eq!(parsed.repo, vec!["repo1", "repo2", "repo3"]);
     }
 
     #[test]

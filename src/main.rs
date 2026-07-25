@@ -28,64 +28,75 @@ async fn main() -> anyhow::Result<()> {
     args.validate()?;
 
     let config = Config::from_env(args.profile.as_deref())?;
-
-    let repo = args.repo.as_deref().unwrap_or(&config.github_repo);
-
-    let client = GitHubClient::new(
-        config.github_token.clone(),
-        config.github_owner.clone(),
-        repo.to_string(),
-    );
-
-    println!("Fetching issues...");
-    let issues = github::issues::fetch_issues(&client, &args.start).await?;
-
-    println!("Fetching pull requests...");
-    let prs = github::prs::fetch_prs(&client, &args.start).await?;
+    let repos = if args.repo.is_empty() {
+        vec![config.github_repo.clone()]
+    } else {
+        args.repo.clone()
+    };
 
     let start_dt = chrono::DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", args.start))?
         .with_timezone(&chrono::Utc);
     let end_dt = chrono::DateTime::parse_from_rfc3339(&format!("{}T23:59:59Z", args.end))?
         .with_timezone(&chrono::Utc);
 
-    println!("Fetching commits...");
+    println!("Fetching repository activity...");
     let since = format!("{}T00:00:00Z", args.start);
     let until = format!("{}T23:59:59Z", args.end);
-    let mut commits =
-        github::commits::fetch_commits(&client, &config.github_user, &since, &until).await?;
+    let mut entries = Vec::new();
+    let mut repo_labels = Vec::new();
 
-    let prs_for_commit_fetch: Vec<_> = prs
-        .iter()
-        .filter(|pr| is_pr_relevant_for_commit_fetch(pr, &config.github_user, start_dt, end_dt))
-        .collect();
-
-    println!(
-        "Fetching pull request commits for {} relevant PR(s)...",
-        prs_for_commit_fetch.len()
-    );
-    let mut pr_commit_urls = HashSet::new();
-    for (idx, pr) in prs_for_commit_fetch.iter().enumerate() {
-        println!(
-            "Fetching PR commits {}/{}: #{}",
-            idx + 1,
-            prs_for_commit_fetch.len(),
-            pr.number
+    for (idx, repo) in repos.iter().enumerate() {
+        println!("Fetching repository {}/{}: {}", idx + 1, repos.len(), repo);
+        let client = GitHubClient::new(
+            config.github_token.clone(),
+            config.github_owner.clone(),
+            repo.to_string(),
         );
-        let pr_commits = github::commits::fetch_pr_commits(&client, pr.number as u32).await?;
-        pr_commit_urls.extend(pr_commits.into_iter().map(|commit| commit.html_url));
+
+        println!("Fetching issues for {}...", repo);
+        let issues = github::issues::fetch_issues(&client, &args.start).await?;
+        println!("Fetching pull requests for {}...", repo);
+        let prs = github::prs::fetch_prs(&client, &args.start).await?;
+        let mut commits =
+            github::commits::fetch_commits(&client, &config.github_user, &since, &until).await?;
+
+        let prs_for_commit_fetch: Vec<_> = prs
+            .iter()
+            .filter(|pr| is_pr_relevant_for_commit_fetch(pr, &config.github_user, start_dt, end_dt))
+            .collect();
+
+        println!(
+            "Fetching pull request commits for {} relevant PR(s) in {}...",
+            prs_for_commit_fetch.len(),
+            repo
+        );
+        let mut pr_commit_urls = HashSet::new();
+        for (pr_idx, pr) in prs_for_commit_fetch.iter().enumerate() {
+            println!(
+                "Fetching PR commits {}/{}: #{}",
+                pr_idx + 1,
+                prs_for_commit_fetch.len(),
+                pr.number
+            );
+            let pr_commits = github::commits::fetch_pr_commits(&client, pr.number as u32).await?;
+            pr_commit_urls.extend(pr_commits.into_iter().map(|commit| commit.html_url));
+        }
+        commits = exclude_pr_linked_commits(commits, &pr_commit_urls);
+
+        let mut repo_entries =
+            timesheet::mapper::map_issues_to_entries(issues, &config.github_user, start_dt, end_dt);
+
+        let mut pr_entries =
+            timesheet::mapper::map_issues_to_entries(prs, &config.github_user, start_dt, end_dt);
+        repo_entries.append(&mut pr_entries);
+
+        let mut commit_entries =
+            timesheet::mapper::map_commits_to_entries(commits, &config.github_user);
+        repo_entries.append(&mut commit_entries);
+
+        entries.append(&mut repo_entries);
+        repo_labels.push(repo.clone());
     }
-    commits = exclude_pr_linked_commits(commits, &pr_commit_urls);
-
-    let mut entries =
-        timesheet::mapper::map_issues_to_entries(issues, &config.github_user, start_dt, end_dt);
-
-    let mut pr_entries =
-        timesheet::mapper::map_issues_to_entries(prs, &config.github_user, start_dt, end_dt);
-    entries.append(&mut pr_entries);
-
-    let mut commit_entries =
-        timesheet::mapper::map_commits_to_entries(commits, &config.github_user);
-    entries.append(&mut commit_entries);
 
     entries = deduplicate_entries(entries);
     entries.sort_by(|a, b| a.date.cmp(&b.date));
@@ -100,11 +111,12 @@ async fn main() -> anyhow::Result<()> {
 
     let entries_by_week = split_entries_by_week(entries.clone(), &weeks);
     let template_path = PathBuf::from(&args.file);
+    let repo_label = repo_display_label(&repo_labels);
 
     for (idx, week) in weeks.iter().enumerate() {
         let filename = format!(
             "{}_{}_{}_{}_{}_to_{}.xlsx",
-            repo.to_uppercase(),
+            repo_filename_label(&repo_labels),
             config.github_user,
             "Week",
             idx + 1,
@@ -117,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
             &entries_by_week[idx],
             &template_path,
             &output_path,
-            repo,
+            &repo_label,
             &config.github_user,
             week,
             args.hours_per_day,
@@ -197,4 +209,17 @@ fn is_pr_relevant_for_commit_fetch(
         || utils::dates::is_in_range(pr.closed_at.as_deref(), start, end);
 
     touched_in_range && (assigned || created_by_user)
+}
+
+fn repo_display_label(repos: &[String]) -> String {
+    repos.join(", ")
+}
+
+fn repo_filename_label(repos: &[String]) -> String {
+    repos
+        .iter()
+        .map(|repo| repo.replace('/', "-"))
+        .collect::<Vec<_>>()
+        .join("_")
+        .to_uppercase()
 }
