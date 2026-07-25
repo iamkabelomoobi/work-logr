@@ -11,6 +11,7 @@ The application fetches GitHub activity for a configured user and writes one pop
 
 - Fetches GitHub issues and pull requests for a specific user within a date range
 - Fetches commits authored by the configured GitHub user
+- Merges activity from multiple repositories into one export when multiple repo names are passed
 - Uses commits attached to included pull requests to suppress duplicate commit rows
 - Filters items by:
   - Assignment to the target user
@@ -65,17 +66,21 @@ GITHUB_USER=your_github_username
 
 ```bash
 cargo run --release -- --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18 --hours-per-day 7.5
+cargo run --release -- --file templates/TimesheetTemplate.xlsx --repo repo1 repo2 repo3 --start 2026-04-26 --end 2026-05-18
 ```
 
 The application will generate one Excel workbook per week in `output/`, for example:
 `REPO_iamkabelomoobi_Week_1_2026-04-26_to_2026-04-26.xlsx`
+
+When multiple repos are supplied, the output filename prefixes are combined, for example:
+`REPO1_REPO2_REPO3_iamkabelomoobi_Week_1_2026-04-26_to_2026-04-26.xlsx`
 
 ### CLI Options
 
 | Option | Description | Default |
 | --- | --- | --- |
 | `--file <path>` | Path to the timesheet template file | Required |
-| `--repo <name>` | Override the configured GitHub repository | `GITHUB_REPO` from the selected configuration |
+| `--repo <name...>` | Override the configured GitHub repository with one or more repos to merge | `GITHUB_REPO` from the selected configuration |
 | `--profile <name>` | Load profile-scoped `WORKLOGR_<PROFILE>_GITHUB_*` variables | Bare `GITHUB_*` variables |
 | `--hours-per-day <f64>` | Hours assigned to a workday with activity | `8.0` |
 | `--start <YYYY-MM-DD>` | Start date | Required |
@@ -108,6 +113,9 @@ cargo run --release -- --profile estate-grid --file templates/TimesheetTemplate.
 
 When `--profile` is omitted, the existing bare `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, and
 `GITHUB_USER` variables are used.
+
+When multiple repo names are passed with `--repo`, the app fetches each repository in turn and
+merges the resulting issues, pull requests, and commits into the same weekly workbooks.
 
 ## Generation Rules
 
