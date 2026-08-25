@@ -15,21 +15,17 @@ pub async fn fetch_pr_commits(
     let per_page = 100;
 
     loop {
-        let response = client
-            .client
-            .get(&url)
-            .header("User-Agent", "work-logr")
-            .header("Authorization", client.auth_header())
-            .header("Accept", "application/vnd.github.v3+json")
-            .query(&[
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
+        let per_page_str = per_page.to_string();
+        let page_str = page.to_string();
+        let (status, text) = client
+            .get_with_retry(
+                &url,
+                &[
+                    ("per_page", per_page_str.as_str()),
+                    ("page", page_str.as_str()),
+                ],
+            )
             .await?;
-
-        let status = response.status();
-        let text = response.text().await?;
 
         if !status.is_success() {
             return Err(GitHubError::RequestFailed(format!(
@@ -72,24 +68,20 @@ pub async fn fetch_commits(
     let per_page = 100;
 
     loop {
-        let response = client
-            .client
-            .get(&url)
-            .header("User-Agent", "work-logr")
-            .header("Authorization", client.auth_header())
-            .header("Accept", "application/vnd.github.v3+json")
-            .query(&[
-                ("author", author),
-                ("since", since),
-                ("until", until),
-                ("per_page", &per_page.to_string()),
-                ("page", &page.to_string()),
-            ])
-            .send()
+        let per_page_str = per_page.to_string();
+        let page_str = page.to_string();
+        let (status, text) = client
+            .get_with_retry(
+                &url,
+                &[
+                    ("author", author),
+                    ("since", since),
+                    ("until", until),
+                    ("per_page", per_page_str.as_str()),
+                    ("page", page_str.as_str()),
+                ],
+            )
             .await?;
-
-        let status = response.status();
-        let text = response.text().await?;
 
         if !status.is_success() {
             return Err(GitHubError::RequestFailed(format!(

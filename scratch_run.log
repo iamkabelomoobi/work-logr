@@ -1,0 +1,11 @@
+Fetching repository activity...
+Fetching repository 1/2: nsfas
+Fetching issues for nsfas...
+Fetching pull requests for nsfas...
+Error: API error
+
+Caused by:
+    0: error decoding response body
+    1: request or response body error
+    2: operation timed out
+EXIT_CODE=1
