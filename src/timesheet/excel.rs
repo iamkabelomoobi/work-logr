@@ -203,21 +203,24 @@ fn replace_worksheet_data(
         )?;
     }
 
-    if rows.len() > layout.data_rows.len() {
-        return Err(anyhow!(
-            "Template has {} timesheet row(s), but this week needs {} activity/day row(s)",
-            layout.data_rows.len(),
-            rows.len()
-        ));
+    // Grow the worksheet when a week has more activities than the template has
+    // data rows. Appended rows mirror the last data row's formatting, and the
+    // sheet dimension and full-height merges are extended to cover them.
+    let mut data_rows = layout.data_rows.clone();
+    if rows.len() > data_rows.len() {
+        let extra = rows.len() - data_rows.len();
+        let (grown, added_rows) = grow_worksheet_rows(&updated, &data_rows, extra)?;
+        updated = grown;
+        data_rows.extend(added_rows);
     }
 
-    // Clear only the discovered fill columns in existing template rows. We do
-    // not create/delete rows or change row/column metadata.
-    for row_number in &layout.data_rows {
+    // Clear only the discovered fill columns in existing template rows. Appended
+    // rows start empty, so clearing is a no-op for them.
+    for row_number in &data_rows {
         updated = clear_timesheet_row_values(&updated, layout, *row_number)?;
     }
 
-    for (row, row_number) in rows.iter().zip(&layout.data_rows) {
+    for (row, row_number) in rows.iter().zip(&data_rows) {
         updated = set_cell(
             &updated,
             &layout.cell_ref("date", *row_number)?,
@@ -263,6 +266,136 @@ fn replace_worksheet_data(
     }
 
     Ok(updated)
+}
+
+/// Append `extra` empty data rows to the worksheet, mirroring the last existing
+/// data row's opening tag so added rows keep its height and formatting, and
+/// extend the sheet dimension plus any full-height merges to cover them.
+/// Returns the grown worksheet and the row numbers that were appended.
+fn grow_worksheet_rows(
+    worksheet: &str,
+    data_rows: &[u32],
+    extra: usize,
+) -> Result<(String, Vec<u32>)> {
+    let last_row = *data_rows
+        .last()
+        .ok_or_else(|| anyhow!("Template has no data rows to grow from"))?;
+    let model_open = row_open_tag(worksheet, last_row)?;
+
+    let mut appended = String::new();
+    let mut added_rows = Vec::with_capacity(extra);
+    for offset in 1..=extra as u32 {
+        let new_row = last_row + offset;
+        appended.push_str(&renumber_row_open_tag(&model_open, last_row, new_row));
+        appended.push_str("</row>");
+        added_rows.push(new_row);
+    }
+
+    let insert_at = worksheet
+        .find("</sheetData>")
+        .ok_or_else(|| anyhow!("Template worksheet is missing </sheetData>"))?;
+    let mut updated = worksheet.to_string();
+    updated.insert_str(insert_at, &appended);
+
+    let new_last_row = last_row + extra as u32;
+    updated = extend_dimension(&updated, new_last_row)?;
+    updated = extend_full_height_merges(&updated, last_row, new_last_row);
+
+    Ok((updated, added_rows))
+}
+
+/// Return a row's opening `<row ...>` tag, e.g. `<row r="31" spans="7:9" ...>`.
+fn row_open_tag(worksheet: &str, row: u32) -> Result<String> {
+    let marker = format!(r#"<row r="{row}""#);
+    let start = worksheet
+        .find(&marker)
+        .ok_or_else(|| anyhow!("Template worksheet is missing row {}", row))?;
+    let relative_end = worksheet[start..]
+        .find('>')
+        .ok_or_else(|| anyhow!("Template worksheet has a malformed row {}", row))?;
+    Ok(worksheet[start..start + relative_end + 1].to_string())
+}
+
+/// Renumber a model opening tag for a new row, normalizing a self-closing
+/// `<row .../>` into an opening tag that can be paired with `</row>`.
+fn renumber_row_open_tag(model_open: &str, old_row: u32, new_row: u32) -> String {
+    let renumbered =
+        model_open.replace(&format!(r#"r="{old_row}""#), &format!(r#"r="{new_row}""#));
+    match renumbered.strip_suffix("/>") {
+        Some(stripped) => format!("{stripped}>"),
+        None => renumbered,
+    }
+}
+
+/// Set the worksheet `<dimension>` end row to `new_last_row`, preserving its end
+/// column. Missing dimension elements are left untouched.
+fn extend_dimension(worksheet: &str, new_last_row: u32) -> Result<String> {
+    let prefix = r#"<dimension ref=""#;
+    let Some(value_start) = worksheet.find(prefix).map(|idx| idx + prefix.len()) else {
+        return Ok(worksheet.to_string());
+    };
+    let value_end = worksheet[value_start..]
+        .find('"')
+        .map(|idx| value_start + idx)
+        .ok_or_else(|| anyhow!("Template worksheet has a malformed dimension ref"))?;
+    let new_ref = bump_ref_end_row(&worksheet[value_start..value_end], new_last_row);
+
+    let mut updated = worksheet.to_string();
+    updated.replace_range(value_start..value_end, &new_ref);
+    Ok(updated)
+}
+
+/// Extend the end row of every `<mergeCell>` whose bottom edge sits on the old
+/// last row, so full-height merges keep covering the table after it grows.
+fn extend_full_height_merges(worksheet: &str, old_last_row: u32, new_last_row: u32) -> String {
+    let marker = r#"<mergeCell ref=""#;
+    let mut result = String::with_capacity(worksheet.len() + 16);
+    let mut cursor = 0;
+
+    while let Some(relative) = worksheet[cursor..].find(marker) {
+        let value_start = cursor + relative + marker.len();
+        let Some(relative_end) = worksheet[value_start..].find('"') else {
+            break;
+        };
+        let value_end = value_start + relative_end;
+        let reference = &worksheet[value_start..value_end];
+
+        result.push_str(&worksheet[cursor..value_start]);
+        if merge_end_row(reference) == Some(old_last_row) {
+            result.push_str(&bump_ref_end_row(reference, new_last_row));
+        } else {
+            result.push_str(reference);
+        }
+        cursor = value_end;
+    }
+
+    result.push_str(&worksheet[cursor..]);
+    result
+}
+
+/// Parse the end row of a range reference, e.g. `G1:I31` -> `31`, `A7` -> `7`.
+fn merge_end_row(reference: &str) -> Option<u32> {
+    let end = reference.split_once(':').map(|(_, end)| end).unwrap_or(reference);
+    end.chars()
+        .skip_while(|ch| ch.is_ascii_alphabetic())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+/// Rewrite a range reference's end cell to sit on `new_last_row`, keeping its end
+/// column, e.g. `A1:O31` with `43` -> `A1:O43`.
+fn bump_ref_end_row(reference: &str, new_last_row: u32) -> String {
+    match reference.split_once(':') {
+        Some((start, end)) => {
+            let column: String = end
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphabetic())
+                .collect();
+            format!("{start}:{column}{new_last_row}")
+        }
+        None => reference.to_string(),
+    }
 }
 
 fn clear_timesheet_row_values(
@@ -1056,6 +1189,69 @@ mod tests {
         );
         let output_styles = read_zip_entry(&output_path, "xl/styles.xml");
         assert_eq!(template_styles, output_styles);
+
+        let _ = std::fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn grows_template_rows_when_a_week_exceeds_template_capacity() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let output_path = std::env::temp_dir().join(format!("work-logr-grow-{unique}.xlsx"));
+        let week = WeekRange {
+            start: NaiveDate::from_ymd_opt(2026, 5, 18).expect("valid test date"),
+            end: NaiveDate::from_ymd_opt(2026, 5, 24).expect("valid test date"),
+        };
+
+        // 30 activities on Monday overflow the template's 24 data rows. With six
+        // empty rows for Tue-Sun, the week needs 36 rows, so the sheet must grow
+        // from its last data row (31) to row 43.
+        let entries: Vec<TimesheetEntry> = (1..=30)
+            .map(|i| {
+                timesheet_entry_on(
+                    "Issue",
+                    &i.to_string(),
+                    &format!("Overflow task {i}"),
+                    "2026-05-18T11:00:00Z",
+                )
+            })
+            .collect();
+
+        export_to_excel(
+            &entries,
+            Path::new("templates/TimesheetTemplate.xlsx"),
+            &output_path,
+            "nsfas",
+            "iamkabelomoobi",
+            &week,
+            8.0,
+        )
+        .expect("export should grow the template instead of erroring");
+
+        let worksheet = String::from_utf8(read_zip_entry(&output_path, WORKSHEET_PATH))
+            .expect("output worksheet should be UTF-8");
+        let shared_strings =
+            String::from_utf8(read_zip_entry(&output_path, SHARED_STRINGS_PATH))
+                .expect("output shared strings should be UTF-8");
+        let strings = parse_shared_string_values(&shared_strings);
+
+        // The sheet dimension and full-height notes merge both extend to row 43.
+        assert!(
+            worksheet.contains(r#"ref="A1:O43""#),
+            "dimension should extend to the last grown row"
+        );
+        assert!(
+            worksheet.contains("G1:I43"),
+            "the G:I merge should extend to cover the grown rows"
+        );
+
+        // The 30th Monday activity lands on a grown row (row 37 > original 31).
+        assert_eq!(
+            shared_cell_text(&worksheet, &strings, "C37"),
+            "Issue #30: Overflow task 30"
+        );
 
         let _ = std::fs::remove_file(output_path);
     }
