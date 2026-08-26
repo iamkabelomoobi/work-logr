@@ -1,3 +1,8 @@
 /target
 .env
 /output
+
+# Build artifacts and scratch files (should not be committed)
+/dist/work-logr
+/dist/work-logr.exe
+scratch_run.log

@@ -30,10 +30,18 @@ impl GitHubClient {
         // GitHub's edge occasionally terminates HTTP/2 streams mid-body
         // (RST_STREAM CANCEL). Pinning HTTP/1.1 avoids that failure class;
         // retries in `get_with_retry` cover the drops that still happen.
+        //
+        // Timeouts: some endpoints (e.g. `pulls?state=all`) legitimately stream
+        // multi-MB bodies over tens of seconds, so a *total* timeout would kill
+        // healthy-but-slow responses. `read_timeout` is an inactivity timeout
+        // that resets on each chunk, so it only fires on a genuinely stalled
+        // connection — which `get_with_retry` then retries. The generous total
+        // `timeout` is only a last-resort backstop.
         let client = reqwest::Client::builder()
             .http1_only()
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
+            .read_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(120))
             .build()
             .expect("failed to build HTTP client");
         GitHubClient {
