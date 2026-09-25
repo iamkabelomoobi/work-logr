@@ -4,8 +4,7 @@ mod models;
 mod prompts;
 
 pub use client::GroqClient;
-pub use error::AiError;
-pub use models::{AiEnrichment, EnrichmentStats};
+use models::EnrichmentStats;
 
 use crate::timesheet::model::TimesheetEntry;
 
