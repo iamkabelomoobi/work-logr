@@ -81,13 +81,14 @@ async fn main() -> anyhow::Result<()> {
     if args.ai {
         let groq = ai::GroqClient::from_env(args.ai_model.clone())?;
         println!(
-            "Enriching {} worklog entr{} with Groq model {}...",
+            "Enriching {} worklog entr{} with Groq model {} in batches of {}...",
             entries.len(),
             if entries.len() == 1 { "y" } else { "ies" },
-            groq.model()
+            groq.model(),
+            args.ai_batch_size
         );
 
-        let stats = ai::enrich_entries(&groq, &mut entries).await;
+        let stats = ai::enrich_entries(&groq, &mut entries, args.ai_batch_size).await;
         println!(
             "AI enrichment complete: {} enriched, {} fallback",
             stats.enriched, stats.failed

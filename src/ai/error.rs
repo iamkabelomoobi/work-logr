@@ -19,4 +19,7 @@ pub enum AiError {
 
     #[error("Groq returned invalid structured output: {0}")]
     InvalidOutput(#[from] serde_json::Error),
+
+    #[error("Groq returned an invalid batch mapping: {0}")]
+    InvalidBatchMapping(String),
 }

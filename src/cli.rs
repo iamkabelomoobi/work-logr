@@ -38,6 +38,13 @@ pub struct CliArgs {
     )]
     pub ai_model: String,
 
+    #[arg(
+        long,
+        default_value_t = 5,
+        help = "Number of worklog entries sent to Groq per request (1-20)"
+    )]
+    pub ai_batch_size: usize,
+
     #[arg(long, help = "Start date (YYYY-MM-DD)")]
     pub start: String,
 
@@ -57,6 +64,12 @@ impl CliArgs {
 
         if !self.hours_per_day.is_finite() || self.hours_per_day <= 0.0 {
             return Err(anyhow::anyhow!("Hours per day must be a positive number"));
+        }
+
+        if !(1..=20).contains(&self.ai_batch_size) {
+            return Err(anyhow::anyhow!(
+                "AI batch size must be between 1 and 20"
+            ));
         }
 
         chrono::NaiveDate::parse_from_str(&self.start, "%Y-%m-%d")
@@ -109,6 +122,7 @@ mod tests {
 
         assert!(!parsed.ai);
         assert_eq!(parsed.ai_model, "openai/gpt-oss-20b");
+        assert_eq!(parsed.ai_batch_size, 5);
     }
 
     #[test]
@@ -120,6 +134,33 @@ mod tests {
 
         assert!(parsed.ai);
         assert_eq!(parsed.ai_model, "openai/gpt-oss-120b");
+    }
+
+    #[test]
+    fn parses_custom_ai_batch_size() {
+        let mut args = required_args();
+        args.extend(["--ai", "--ai-batch-size", "8"]);
+
+        let parsed = CliArgs::try_parse_from(args).expect("arguments should parse");
+
+        assert_eq!(parsed.ai_batch_size, 8);
+    }
+
+    #[test]
+    fn rejects_out_of_range_ai_batch_size() {
+        for batch_size in ["0", "21"] {
+            let mut args = required_args();
+            args.extend(["--ai-batch-size", batch_size]);
+            let parsed = CliArgs::try_parse_from(args).expect("usize argument should parse");
+
+            let error = parsed.validate().expect_err("invalid batch size should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("AI batch size must be between 1 and 20"),
+                "unexpected validation error for {batch_size}: {error}"
+            );
+        }
     }
 
     #[test]

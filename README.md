@@ -24,6 +24,7 @@ The application fetches GitHub activity for a configured user and writes one pop
 - Supports pagination for large result sets
 - Optionally enriches raw GitHub titles into concise, professional timesheet descriptions with Groq
 - Preserves the original GitHub title and falls back to it when AI enrichment fails
+- Batches multiple worklog entries into each Groq request to reduce request overhead and rate-limit pressure
 
 ## Project Structure
 
@@ -96,6 +97,7 @@ When multiple repos are supplied, the output filename prefixes are combined, for
 | `--hours-per-day <f64>` | Hours assigned to a workday with activity | `8.0` |
 | `--ai` | Enrich task descriptions with Groq before export | Disabled |
 | `--ai-model <model>` | Groq model used for enrichment | `openai/gpt-oss-20b` |
+| `--ai-batch-size <1-20>` | Number of worklog entries sent to Groq per request | `5` |
 | `--start <YYYY-MM-DD>` | Start date | Required |
 | `--end <YYYY-MM-DD>` | End date | Required |
 
@@ -132,11 +134,17 @@ merges the resulting issues, pull requests, and commits into the same weekly wor
 
 ## AI Enrichment
 
-AI enrichment is opt-in. When `--ai` is supplied, Work Logr sends each already-filtered worklog entry to Groq after GitHub deduplication and PR-over-commit preference rules have run.
+AI enrichment is opt-in. When `--ai` is supplied, Work Logr sends already-filtered worklog entries to Groq after GitHub deduplication and PR-over-commit preference rules have run. Entries are sent in batches of 5 by default rather than one API request per activity.
 
 The AI layer may rewrite and classify the supplied activity, but it does not decide which GitHub records belong in the timesheet and it cannot change dates, hours, URLs, repository selection, or activity inclusion. The original GitHub title is preserved internally before an enriched description replaces the display title.
 
-Work Logr requests strict JSON-schema output from Groq. If a runtime Groq request fails, returns an API error, or produces unusable output, that entry keeps its original GitHub title and workbook generation continues. If `--ai` is enabled without `GROQ_API_KEY`, the command fails immediately with a configuration error.
+Work Logr requests strict JSON-schema output from Groq. Every input activity is assigned a numeric batch index and the response is accepted only when every expected index appears exactly once. This prevents a generated description from being attached to the wrong GitHub activity. If a batch request fails after bounded retries, every entry in that batch keeps its original GitHub title and workbook generation continues. If `--ai` is enabled without `GROQ_API_KEY`, the command fails immediately with a configuration error.
+
+For a run with 55 activities, the default batch size reduces the normal request count from 55 single-entry requests to about 11 batch requests. You can tune the size between 1 and 20:
+
+```bash
+cargo run --release -- --ai --ai-batch-size 8 --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
+```
 
 Example with a different supported model:
 
@@ -157,6 +165,7 @@ cargo run --release -- --ai --ai-model openai/gpt-oss-120b --file templates/Time
 - Weekends and days without activity default to `0` hours.
 - Merge commits are excluded from the timesheet.
 - AI enrichment runs only after deterministic GitHub filtering, PR preference, and deduplication.
+- AI batch responses must preserve a one-to-one mapping to the input activities; malformed batches fall back without changing source records.
 - AI enrichment never changes configured workday hours.
 
 ## Excel Output Format
