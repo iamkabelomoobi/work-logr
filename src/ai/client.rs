@@ -11,6 +11,7 @@ const GROQ_CHAT_COMPLETIONS_URL: &str = "https://api.groq.com/openai/v1/chat/com
 const GROQ_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const GROQ_MAX_ATTEMPTS: usize = 4;
 const GROQ_RETRY_BUFFER: Duration = Duration::from_millis(250);
+const GROQ_SCHEMA_RETRY_DELAY: Duration = Duration::from_millis(750);
 
 #[derive(Debug, Clone)]
 pub struct GroqClient {
@@ -76,7 +77,7 @@ impl GroqClient {
                 {
                     "role": "user",
                     "content": format!(
-                        "Rewrite and classify every GitHub activity below. Return exactly one output entry for every input activity. Preserve each numeric index exactly and do not merge, omit, reorder semantically, or invent activities. Activities:\n{}",
+                        "Rewrite and classify every GitHub activity below. Return exactly one output entry for every input activity. Preserve each numeric index exactly and do not merge, omit, reorder semantically, or invent activities. IMPORTANT: the top-level JSON must be an object whose \"entries\" field is directly an ARRAY. Never wrap the array in an \"items\" object. Valid shape example: {\"entries\":[{\"index\":0,\"description\":\"...\",\"category\":\"Other\",\"technical_area\":\"Other\"}]}. Activities:\n{}",
                         serde_json::to_string_pretty(&activities)?
                     )
                 }
@@ -161,11 +162,18 @@ impl GroqClient {
                 return parse_batch_enrichment(&body, entries.len());
             }
 
+            let schema_validation_failed = is_schema_validation_failure(status, &body);
             let retryable = status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                || status.is_server_error();
+                || status.is_server_error()
+                || schema_validation_failed;
 
             if retryable && attempt < GROQ_MAX_ATTEMPTS {
-                let delay = retry_after.unwrap_or_else(|| exponential_backoff(attempt));
+                let delay = if schema_validation_failed {
+                    GROQ_SCHEMA_RETRY_DELAY
+                } else {
+                    retry_after.unwrap_or_else(|| exponential_backoff(attempt))
+                };
+
                 eprintln!(
                     "Groq returned {}. Retrying batch in {:.2}s (attempt {}/{})...",
                     status,
@@ -242,6 +250,12 @@ fn validate_batch_mapping(
     Ok(entries)
 }
 
+fn is_schema_validation_failure(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::BAD_REQUEST
+        && (body.contains("\"code\":\"json_validate_failed\"")
+            || body.contains("json_validate_failed"))
+}
+
 fn retry_after_duration(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let seconds = headers
         .get(RETRY_AFTER)?
@@ -306,6 +320,30 @@ mod tests {
         assert!(error
             .to_string()
             .contains("expected 2 entries but received 1"));
+    }
+
+    #[test]
+    fn identifies_groq_schema_validation_failure() {
+        let body = r#"{"error":{"code":"json_validate_failed"}}"#;
+
+        assert!(is_schema_validation_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+        assert!(!is_schema_validation_failure(
+            reqwest::StatusCode::UNAUTHORIZED,
+            body
+        ));
+    }
+
+    #[test]
+    fn does_not_retry_unrelated_bad_request() {
+        let body = r#"{"error":{"code":"invalid_request_error"}}"#;
+
+        assert!(!is_schema_validation_failure(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
     }
 
     #[test]
