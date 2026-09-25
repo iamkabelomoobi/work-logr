@@ -33,6 +33,10 @@ pub fn map_issues_to_entries(
                 },
                 number: issue.number.to_string(),
                 title: issue.title,
+                original_title: None,
+                ai_category: None,
+                ai_technical_area: None,
+                ai_model: None,
                 status: issue.state,
                 closed_at: issue.closed_at.unwrap_or_default(),
                 created_at: issue.created_at,
@@ -69,6 +73,10 @@ pub fn map_commits_to_entries(commits: Vec<GitHubCommit>, user: &str) -> Vec<Tim
                 entry_type: "Commit".to_string(),
                 number: String::new(),
                 title: first_line.to_string(),
+                original_title: None,
+                ai_category: None,
+                ai_technical_area: None,
+                ai_model: None,
                 status: "committed".to_string(),
                 closed_at: String::new(),
                 created_at: commit.commit.author.date,
@@ -198,6 +206,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].title, "Implement Excel rows");
         assert_eq!(entries[0].date, "2026-05-19T14:00:00Z");
+        assert!(entries[0].original_title.is_none());
     }
 
     #[test]
@@ -263,6 +272,10 @@ mod tests {
             entry_type: entry_type.to_string(),
             number: "1".to_string(),
             title: title.to_string(),
+            original_title: None,
+            ai_category: None,
+            ai_technical_area: None,
+            ai_model: None,
             status: "open".to_string(),
             closed_at: String::new(),
             created_at: date.to_string(),

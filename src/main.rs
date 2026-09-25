@@ -1,3 +1,4 @@
+mod ai;
 mod cli;
 mod config;
 mod github;
@@ -76,6 +77,22 @@ async fn main() -> anyhow::Result<()> {
 
     entries = deduplicate_entries(entries);
     entries.sort_by(|a, b| a.date.cmp(&b.date));
+
+    if args.ai {
+        let groq = ai::GroqClient::from_env(args.ai_model.clone())?;
+        println!(
+            "Enriching {} worklog entr{} with Groq model {}...",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" },
+            groq.model()
+        );
+
+        let stats = ai::enrich_entries(&groq, &mut entries).await;
+        println!(
+            "AI enrichment complete: {} enriched, {} fallback",
+            stats.enriched, stats.failed
+        );
+    }
 
     let weeks = utils::dates::get_week_ranges(
         chrono::NaiveDate::parse_from_str(&args.start, "%Y-%m-%d")?,

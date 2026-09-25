@@ -22,6 +22,8 @@ The application fetches GitHub activity for a configured user and writes one pop
 - Ignores merge commits, including commits with multiple parents and messages starting with `Merge`, `Merged`, or `Merge:`
 - Exports filtered records into Excel workbooks using a provided `.xlsx` template
 - Supports pagination for large result sets
+- Optionally enriches raw GitHub titles into concise, professional timesheet descriptions with Groq
+- Preserves the original GitHub title and falls back to it when AI enrichment fails
 
 ## Project Structure
 
@@ -30,6 +32,11 @@ src/
 ├── main.rs              # Application entry point and orchestration
 ├── config.rs            # Configuration loading from environment variables
 ├── cli.rs               # Command-line argument parsing
+├── ai/
+│   ├── client.rs        # Groq API client and structured-output request
+│   ├── error.rs         # AI-specific error handling
+│   ├── models.rs        # AI response models
+│   └── prompts.rs       # Timesheet enrichment guardrails
 ├── github/
 │   ├── client.rs        # GitHub API client
 │   ├── issues.rs        # Issue fetching
@@ -60,6 +67,9 @@ GITHUB_TOKEN=your_github_token_here
 GITHUB_OWNER=repository_owner
 GITHUB_REPO=repository_name
 GITHUB_USER=your_github_username
+
+# Required only when --ai is enabled
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 ### Execute
@@ -67,6 +77,7 @@ GITHUB_USER=your_github_username
 ```bash
 cargo run --release -- --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18 --hours-per-day 7.5
 cargo run --release -- --file templates/TimesheetTemplate.xlsx --repo repo1 repo2 repo3 --start 2026-04-26 --end 2026-05-18
+cargo run --release -- --ai --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
 ```
 
 The application will generate one Excel workbook per week in `output/`, for example:
@@ -83,6 +94,8 @@ When multiple repos are supplied, the output filename prefixes are combined, for
 | `--repo <name...>` | Override the configured GitHub repository with one or more repos to merge | `GITHUB_REPO` from the selected configuration |
 | `--profile <name>` | Load profile-scoped `WORKLOGR_<PROFILE>_GITHUB_*` variables | Bare `GITHUB_*` variables |
 | `--hours-per-day <f64>` | Hours assigned to a workday with activity | `8.0` |
+| `--ai` | Enrich task descriptions with Groq before export | Disabled |
+| `--ai-model <model>` | Groq model used for enrichment | `openai/gpt-oss-20b` |
 | `--start <YYYY-MM-DD>` | Start date | Required |
 | `--end <YYYY-MM-DD>` | End date | Required |
 
@@ -117,6 +130,20 @@ When `--profile` is omitted, the existing bare `GITHUB_TOKEN`, `GITHUB_OWNER`, `
 When multiple repo names are passed with `--repo`, the app fetches each repository in turn and
 merges the resulting issues, pull requests, and commits into the same weekly workbooks.
 
+## AI Enrichment
+
+AI enrichment is opt-in. When `--ai` is supplied, Work Logr sends each already-filtered worklog entry to Groq after GitHub deduplication and PR-over-commit preference rules have run.
+
+The AI layer may rewrite and classify the supplied activity, but it does not decide which GitHub records belong in the timesheet and it cannot change dates, hours, URLs, repository selection, or activity inclusion. The original GitHub title is preserved internally before an enriched description replaces the display title.
+
+Work Logr requests strict JSON-schema output from Groq. If a runtime Groq request fails, returns an API error, or produces unusable output, that entry keeps its original GitHub title and workbook generation continues. If `--ai` is enabled without `GROQ_API_KEY`, the command fails immediately with a configuration error.
+
+Example with a different supported model:
+
+```bash
+cargo run --release -- --ai --ai-model openai/gpt-oss-120b --file templates/TimesheetTemplate.xlsx --start 2026-04-26 --end 2026-05-18
+```
+
 ## Generation Rules
 
 - Each workbook covers one generated week range.
@@ -129,6 +156,8 @@ merges the resulting issues, pull requests, and commits into the same weekly wor
 - Workdays with activity use `--hours-per-day`, which defaults to `8.0`.
 - Weekends and days without activity default to `0` hours.
 - Merge commits are excluded from the timesheet.
+- AI enrichment runs only after deterministic GitHub filtering, PR preference, and deduplication.
+- AI enrichment never changes configured workday hours.
 
 ## Excel Output Format
 
@@ -148,6 +177,7 @@ The generated Excel files preserve the provided template and populate the weekly
 - **Type Safety**: Leverages Rust's type system for compile-time guarantees
 - **Modular Design**: Clean separation of concerns across modules
 - **Pagination**: Automatic handling of GitHub API pagination (100 items per page)
+- **AI Safety Boundary**: Groq only enriches activity already accepted by deterministic Work Logr rules, with original-title fallback
 
 ## Dependencies
 

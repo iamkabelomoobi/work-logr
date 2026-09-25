@@ -5,6 +5,14 @@ pub struct TimesheetEntry {
     pub entry_type: String,
     pub number: String,
     pub title: String,
+    #[serde(default)]
+    pub original_title: Option<String>,
+    #[serde(default)]
+    pub ai_category: Option<String>,
+    #[serde(default)]
+    pub ai_technical_area: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
     pub status: String,
     pub closed_at: String,
     pub created_at: String,

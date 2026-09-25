@@ -28,6 +28,16 @@ pub struct CliArgs {
     )]
     pub hours_per_day: f64,
 
+    #[arg(long, help = "Enrich worklog descriptions with Groq AI")]
+    pub ai: bool,
+
+    #[arg(
+        long,
+        default_value = "openai/gpt-oss-20b",
+        help = "Groq model used for AI enrichment"
+    )]
+    pub ai_model: String,
+
     #[arg(long, help = "Start date (YYYY-MM-DD)")]
     pub start: String,
 
@@ -91,6 +101,25 @@ mod tests {
         let parsed = CliArgs::try_parse_from(required_args()).expect("arguments should parse");
 
         assert_eq!(parsed.hours_per_day, 8.0);
+    }
+
+    #[test]
+    fn ai_is_opt_in_and_uses_default_model() {
+        let parsed = CliArgs::try_parse_from(required_args()).expect("arguments should parse");
+
+        assert!(!parsed.ai);
+        assert_eq!(parsed.ai_model, "openai/gpt-oss-20b");
+    }
+
+    #[test]
+    fn parses_ai_and_custom_model() {
+        let mut args = required_args();
+        args.extend(["--ai", "--ai-model", "openai/gpt-oss-120b"]);
+
+        let parsed = CliArgs::try_parse_from(args).expect("arguments should parse");
+
+        assert!(parsed.ai);
+        assert_eq!(parsed.ai_model, "openai/gpt-oss-120b");
     }
 
     #[test]
