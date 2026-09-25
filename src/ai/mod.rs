@@ -7,6 +7,9 @@ pub use client::GroqClient;
 use models::EnrichmentStats;
 
 use crate::timesheet::model::TimesheetEntry;
+use std::time::Duration;
+
+const GROQ_BATCH_PACING_DELAY: Duration = Duration::from_secs(2);
 
 pub async fn enrich_entries(
     client: &GroqClient,
@@ -15,7 +18,9 @@ pub async fn enrich_entries(
 ) -> EnrichmentStats {
     let mut stats = EnrichmentStats::default();
 
-    for batch in entries.chunks_mut(batch_size) {
+    let batch_count = entries.len().div_ceil(batch_size);
+
+    for (batch_index, batch) in entries.chunks_mut(batch_size).enumerate() {
         match client.enrich_batch(batch).await {
             Ok(enrichments) => {
                 for (entry, enrichment) in batch.iter_mut().zip(enrichments) {
@@ -36,6 +41,10 @@ pub async fn enrich_entries(
                 );
                 stats.failed += batch.len();
             }
+        }
+
+        if batch_index + 1 < batch_count {
+            tokio::time::sleep(GROQ_BATCH_PACING_DELAY).await;
         }
     }
 
