@@ -1,3 +1,4 @@
+mod ai;
 mod cli;
 mod config;
 mod github;
@@ -77,6 +78,22 @@ async fn main() -> anyhow::Result<()> {
     entries = deduplicate_entries(entries);
     entries.sort_by(|a, b| a.date.cmp(&b.date));
 
+    if args.ai {
+        let groq = ai::GroqClient::from_env(args.ai_model.clone())?;
+        println!(
+            "Enriching {} worklog entr{} with Groq model {}...",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" },
+            groq.model()
+        );
+
+        let stats = ai::enrich_entries(&groq, &mut entries).await;
+        println!(
+            "AI enrichment complete: {} enriched, {} fallback",
+            stats.enriched, stats.failed
+        );
+    }
+
     let weeks = utils::dates::get_week_ranges(
         chrono::NaiveDate::parse_from_str(&args.start, "%Y-%m-%d")?,
         chrono::NaiveDate::parse_from_str(&args.end, "%Y-%m-%d")?,
@@ -114,21 +131,22 @@ async fn main() -> anyhow::Result<()> {
         println!("Generated: {}", filename);
     }
 
-    println!("\nTotal entries: {}", entries.len());
+    println!("
+Total entries: {}", entries.len());
     Ok(())
 }
 
 fn print_banner() {
-    const CYAN: &str = "\x1b[96m";
-    const YELLOW: &str = "\x1b[93m";
-    const GREEN: &str = "\x1b[92m";
-    const DIM: &str = "\x1b[2m";
-    const BOLD: &str = "\x1b[1m";
-    const RESET: &str = "\x1b[0m";
+    const CYAN: &str = "[96m";
+    const YELLOW: &str = "[93m";
+    const GREEN: &str = "[92m";
+    const DIM: &str = "[2m";
+    const BOLD: &str = "[1m";
+    const RESET: &str = "[0m";
 
     let ascii_art = [
         r"_    _    ___   _ __  _         _        ___    __ _  _ __ ",
-        r"| |  | | / _ \| '__| | | __    | |      / _ \  / _` | '__|",
+        r"| |  | | / _ | '__| | | __    | |      / _   / _` | '__|",
         r"| |/\| || | | || |   | |/ /    | |     | | | || (_| || |   ",
         r"\  /\  /| |_| ||_|   |   <     | |___  | |_| | \__, ||_|   ",
         r" \/  \/  \___/       |_|\_\    |_____|  \___/      | |     ",
