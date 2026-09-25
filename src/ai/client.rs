@@ -3,8 +3,10 @@ use super::models::{AiEnrichment, ChatCompletionResponse};
 use super::prompts::SYSTEM_PROMPT;
 use crate::timesheet::model::TimesheetEntry;
 use serde_json::json;
+use std::time::Duration;
 
 const GROQ_CHAT_COMPLETIONS_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct GroqClient {
@@ -20,8 +22,12 @@ impl GroqClient {
             .filter(|value| !value.trim().is_empty())
             .ok_or(AiError::MissingApiKey)?;
 
+        let client = reqwest::Client::builder()
+            .timeout(GROQ_REQUEST_TIMEOUT)
+            .build()?;
+
         Ok(Self {
-            client: reqwest::Client::new(),
+            client,
             api_key,
             model: model.into(),
         })
