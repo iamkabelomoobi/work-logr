@@ -7,10 +7,8 @@ mod utils;
 use cli::CliArgs;
 use config::Config;
 use github::GitHubClient;
-use std::collections::HashSet;
 use std::path::PathBuf;
-use timesheet::mapper::{deduplicate_entries, exclude_pr_linked_commits};
-use timesheet::model::GitHubIssue;
+use timesheet::mapper::{deduplicate_entries, prefer_pull_requests_on_same_day};
 use timesheet::weeks::split_entries_by_week;
 
 #[tokio::main]
@@ -57,31 +55,8 @@ async fn main() -> anyhow::Result<()> {
         let issues = github::issues::fetch_issues(&client, &args.start).await?;
         println!("Fetching pull requests for {}...", repo);
         let prs = github::prs::fetch_prs(&client, &args.start).await?;
-        let mut commits =
+        let commits =
             github::commits::fetch_commits(&client, &config.github_user, &since, &until).await?;
-
-        let prs_for_commit_fetch: Vec<_> = prs
-            .iter()
-            .filter(|pr| is_pr_relevant_for_commit_fetch(pr, &config.github_user, start_dt, end_dt))
-            .collect();
-
-        println!(
-            "Fetching pull request commits for {} relevant PR(s) in {}...",
-            prs_for_commit_fetch.len(),
-            repo
-        );
-        let mut pr_commit_urls = HashSet::new();
-        for (pr_idx, pr) in prs_for_commit_fetch.iter().enumerate() {
-            println!(
-                "Fetching PR commits {}/{}: #{}",
-                pr_idx + 1,
-                prs_for_commit_fetch.len(),
-                pr.number
-            );
-            let pr_commits = github::commits::fetch_pr_commits(&client, pr.number as u32).await?;
-            pr_commit_urls.extend(pr_commits.into_iter().map(|commit| commit.html_url));
-        }
-        commits = exclude_pr_linked_commits(commits, &pr_commit_urls);
 
         let mut repo_entries =
             timesheet::mapper::map_issues_to_entries(issues, &config.github_user, start_dt, end_dt);
@@ -93,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         let mut commit_entries =
             timesheet::mapper::map_commits_to_entries(commits, &config.github_user);
         repo_entries.append(&mut commit_entries);
+        repo_entries = prefer_pull_requests_on_same_day(repo_entries);
 
         entries.append(&mut repo_entries);
         repo_labels.push(repo.clone());
@@ -191,24 +167,6 @@ fn print_banner() {
         &|t| format!("{}{}{}", DIM, t, RESET),
     );
     println!();
-}
-
-fn is_pr_relevant_for_commit_fetch(
-    pr: &GitHubIssue,
-    target_user: &str,
-    start: chrono::DateTime<chrono::Utc>,
-    end: chrono::DateTime<chrono::Utc>,
-) -> bool {
-    let assigned = pr
-        .assignees
-        .iter()
-        .any(|assignee| assignee.login == target_user);
-    let created_by_user = pr.user.login == target_user;
-    let touched_in_range = utils::dates::is_in_range(Some(&pr.created_at), start, end)
-        || utils::dates::is_in_range(Some(&pr.updated_at), start, end)
-        || utils::dates::is_in_range(pr.closed_at.as_deref(), start, end);
-
-    touched_in_range && (assigned || created_by_user)
 }
 
 fn repo_display_label(repos: &[String]) -> String {

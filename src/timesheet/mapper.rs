@@ -1,7 +1,6 @@
 use super::model::{GitHubCommit, GitHubIssue, TimesheetEntry};
 use crate::utils::dates;
 use chrono::Utc;
-use std::collections::HashSet;
 
 pub fn map_issues_to_entries(
     issues: Vec<GitHubIssue>,
@@ -83,13 +82,22 @@ pub fn map_commits_to_entries(commits: Vec<GitHubCommit>, user: &str) -> Vec<Tim
         .collect()
 }
 
-pub fn exclude_pr_linked_commits(
-    commits: Vec<GitHubCommit>,
-    linked_commit_urls: &HashSet<String>,
-) -> Vec<GitHubCommit> {
-    commits
+pub fn prefer_pull_requests_on_same_day(entries: Vec<TimesheetEntry>) -> Vec<TimesheetEntry> {
+    let pull_request_dates = entries
+        .iter()
+        .filter(|entry| entry.entry_type == "Pull Request")
+        .filter_map(|entry| entry.date.get(..10).map(str::to_owned))
+        .collect::<std::collections::HashSet<_>>();
+
+    entries
         .into_iter()
-        .filter(|commit| !linked_commit_urls.contains(&commit.html_url))
+        .filter(|entry| {
+            entry.entry_type != "Commit"
+                || entry
+                    .date
+                    .get(..10)
+                    .is_none_or(|date| !pull_request_dates.contains(date))
+        })
         .collect()
 }
 
@@ -147,30 +155,31 @@ pub fn build_task_description(entry: &TimesheetEntry) -> String {
 mod tests {
     use super::*;
     use crate::timesheet::model::{CommitAuthor, CommitDetails, GitHubCommit, GitHubUser};
-    use std::collections::HashSet;
 
     #[test]
-    fn excludes_commits_linked_to_included_pull_requests() {
-        let standalone = commit(
-            "Standalone fix",
-            "iamkabelomoobi",
-            "2026-05-18T09:00:00Z",
-            None,
-            1,
-        );
-        let linked = commit(
-            "PR implementation",
-            "iamkabelomoobi",
-            "2026-05-18T10:00:00Z",
-            None,
-            1,
-        );
-        let linked_urls = HashSet::from([linked.html_url.clone()]);
+    fn keeps_pr_titles_instead_of_commits_from_the_same_day() {
+        let entries = vec![
+            entry("Commit", "Implement first part", "2026-05-18T09:00:00Z"),
+            entry("Pull Request", "Ship the feature", "2026-05-18T16:00:00Z"),
+            entry("Commit", "Start follow-up", "2026-05-19T09:00:00Z"),
+            entry("Issue", "Track follow-up", "2026-05-18T11:00:00Z"),
+        ];
 
-        let filtered = exclude_pr_linked_commits(vec![standalone, linked], &linked_urls);
+        let filtered = prefer_pull_requests_on_same_day(entries);
 
-        assert_eq!(filtered.len(), 1);
-        assert!(filtered[0].html_url.contains("Standalone fix"));
+        assert_eq!(filtered.len(), 3);
+        assert!(filtered
+            .iter()
+            .any(|entry| entry.entry_type == "Pull Request" && entry.title == "Ship the feature"));
+        assert!(filtered
+            .iter()
+            .any(|entry| entry.entry_type == "Commit" && entry.title == "Start follow-up"));
+        assert!(filtered
+            .iter()
+            .any(|entry| entry.entry_type == "Issue" && entry.title == "Track follow-up"));
+        assert!(!filtered
+            .iter()
+            .any(|entry| entry.title == "Implement first part"));
     }
 
     #[test]
@@ -246,6 +255,22 @@ mod tests {
                 login: author.to_string(),
             }),
             parents: vec![serde_json::Value::Null; parent_count],
+        }
+    }
+
+    fn entry(entry_type: &str, title: &str, date: &str) -> TimesheetEntry {
+        TimesheetEntry {
+            entry_type: entry_type.to_string(),
+            number: "1".to_string(),
+            title: title.to_string(),
+            status: "open".to_string(),
+            closed_at: String::new(),
+            created_at: date.to_string(),
+            updated_at: date.to_string(),
+            assignees: "iamkabelomoobi".to_string(),
+            author: "iamkabelomoobi".to_string(),
+            url: format!("https://github.com/example/repo/{entry_type}/{title}"),
+            date: date.to_string(),
         }
     }
 }

@@ -12,13 +12,13 @@ The application fetches GitHub activity for a configured user and writes one pop
 - Fetches GitHub issues and pull requests for a specific user within a date range
 - Fetches commits authored by the configured GitHub user
 - Merges activity from multiple repositories into one export when multiple repo names are passed
-- Uses commits attached to included pull requests to suppress duplicate commit rows
+- Uses the pull request title instead of commit rows when both fall on the same day
 - Filters items by:
   - Assignment to the target user
   - Creation by the target user
   - Date range (created, updated, or closed within range)
 - Places commits on the day they were committed/pushed in GitHub commit metadata
-- Writes each same-day commit or pull request to a separate Excel row with the date repeated
+- Writes each same-day activity to a separate Excel row, except commits are omitted on days with a pull request
 - Ignores merge commits, including commits with multiple parents and messages starting with `Merge`, `Merged`, or `Merge:`
 - Exports filtered records into Excel workbooks using a provided `.xlsx` template
 - Supports pagination for large result sets
@@ -125,6 +125,7 @@ merges the resulting issues, pull requests, and commits into the same weekly wor
 - Issues and pull requests use their closed date when available, otherwise their updated date.
 - Commits use the GitHub committer date.
 - Multiple activities on the same day are written to separate rows with the date repeated.
+- On a day with a pull request, its title is included and commit rows for that repository are omitted.
 - Workdays with activity use `--hours-per-day`, which defaults to `8.0`.
 - Weekends and days without activity default to `0` hours.
 - Merge commits are excluded from the timesheet.
