@@ -131,22 +131,21 @@ async fn main() -> anyhow::Result<()> {
         println!("Generated: {}", filename);
     }
 
-    println!("
-Total entries: {}", entries.len());
+    println!("\nTotal entries: {}", entries.len());
     Ok(())
 }
 
 fn print_banner() {
-    const CYAN: &str = "[96m";
-    const YELLOW: &str = "[93m";
-    const GREEN: &str = "[92m";
-    const DIM: &str = "[2m";
-    const BOLD: &str = "[1m";
-    const RESET: &str = "[0m";
+    const CYAN: &str = "\x1b[96m";
+    const YELLOW: &str = "\x1b[93m";
+    const GREEN: &str = "\x1b[92m";
+    const DIM: &str = "\x1b[2m";
+    const BOLD: &str = "\x1b[1m";
+    const RESET: &str = "\x1b[0m";
 
     let ascii_art = [
         r"_    _    ___   _ __  _         _        ___    __ _  _ __ ",
-        r"| |  | | / _ | '__| | | __    | |      / _   / _` | '__|",
+        r"| |  | | / _ \| '__| | | __    | |      / _ \  / _` | '__|",
         r"| |/\| || | | || |   | |/ /    | |     | | | || (_| || |   ",
         r"\  /\  /| |_| ||_|   |   <     | |___  | |_| | \__, ||_|   ",
         r" \/  \/  \___/       |_|\_\    |_____|  \___/      | |     ",
